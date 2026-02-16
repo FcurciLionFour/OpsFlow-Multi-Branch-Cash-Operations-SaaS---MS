@@ -16,12 +16,18 @@ import { GlobalExceptionFilter } from './common/filters/global-exception.filter'
 import { HealthController } from './health/health.controller';
 import { HealthService } from './health/health.service';
 import { MetricsService } from './common/metrics/metrics.service';
+import { OrganizationsModule } from './organizations/organizations.module';
+import { BranchesModule } from './branches/branches.module';
+import { CashflowModule } from './cashflow/cashflow.module';
 
 @Module({
   imports: [
     PrismaModule,
     AuthModule,
     UsersModule,
+    OrganizationsModule,
+    BranchesModule,
+    CashflowModule,
     ConfigModule.forRoot({
       isGlobal: true,
       load: [configuration],

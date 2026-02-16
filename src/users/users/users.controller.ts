@@ -32,6 +32,7 @@ import {
   ErrorResponseDto,
   ValidationErrorResponseDto,
 } from 'src/common/dto/error-response.dto';
+import type { TenantUserContext } from 'src/common/tenant/tenant-scope';
 
 @ApiTags('Users')
 @ApiBearerAuth()
@@ -48,8 +49,8 @@ export class UsersController {
   @ApiOkResponse({ description: 'Users list' })
   @ApiUnauthorizedResponse({ type: ErrorResponseDto })
   @ApiForbiddenResponse({ type: ErrorResponseDto })
-  findAll(): Promise<UserResponseDto[]> {
-    return this.usersService.findAll();
+  findAll(@CurrentUser() user: TenantUserContext): Promise<UserResponseDto[]> {
+    return this.usersService.findAll(user);
   }
 
   @Get('me')
@@ -69,9 +70,9 @@ export class UsersController {
   @ApiForbiddenResponse({ type: ErrorResponseDto })
   findOne(
     @Param('id') id: string,
-    @CurrentUser() user: { sub: string },
+    @CurrentUser() user: TenantUserContext,
   ): Promise<UserResponseDto | null> {
-    return this.usersService.findById(id, user.sub);
+    return this.usersService.findById(id, user);
   }
 
   @RequirePermissions('users.write')
@@ -83,8 +84,8 @@ export class UsersController {
   @ApiBadRequestResponse({ type: ValidationErrorResponseDto })
   @ApiUnauthorizedResponse({ type: ErrorResponseDto })
   @ApiForbiddenResponse({ type: ErrorResponseDto })
-  create(@Body() body: CreateUserDto) {
-    return this.usersService.create(body);
+  create(@Body() body: CreateUserDto, @CurrentUser() user: TenantUserContext) {
+    return this.usersService.create(body, user);
   }
 
   @RequirePermissions('users.write')
@@ -100,9 +101,9 @@ export class UsersController {
   update(
     @Param('id') id: string,
     @Body() body: UpdateUserDto,
-    @CurrentUser() user: { sub: string },
+    @CurrentUser() user: TenantUserContext,
   ) {
-    return this.usersService.update(id, body, user.sub);
+    return this.usersService.update(id, body, user);
   }
 
   @RequirePermissions('users.write')
@@ -113,7 +114,7 @@ export class UsersController {
   @ApiOkResponse({ description: 'User deleted' })
   @ApiUnauthorizedResponse({ type: ErrorResponseDto })
   @ApiForbiddenResponse({ type: ErrorResponseDto })
-  remove(@Param('id') id: string, @CurrentUser() user: { sub: string }) {
-    return this.usersService.remove(id, user.sub);
+  remove(@Param('id') id: string, @CurrentUser() user: TenantUserContext) {
+    return this.usersService.remove(id, user);
   }
 }

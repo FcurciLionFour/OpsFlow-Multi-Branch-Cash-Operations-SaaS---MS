@@ -11,6 +11,9 @@ describe('AuthService', () => {
   let service: AuthService;
 
   const prismaMock = {
+    organization: {
+      findUnique: jest.fn(),
+    },
     user: {
       create: jest.fn(),
       findUnique: jest.fn(),
@@ -76,7 +79,13 @@ describe('AuthService', () => {
   });
 
   it('register hashes password and creates session', async () => {
+    prismaMock.organization.findUnique.mockResolvedValue({ id: 'org-1' });
     prismaMock.user.create.mockResolvedValue({ id: 'user-1' });
+    prismaMock.user.findUnique.mockResolvedValue({
+      isActive: true,
+      organizationId: 'org-1',
+      branchId: null,
+    });
     prismaMock.authSession.create.mockResolvedValue({ id: 'session-1' });
 
     const result = await service.register('new@test.com', 'secret');
@@ -104,11 +113,17 @@ describe('AuthService', () => {
 
   it('login succeeds with valid credentials', async () => {
     const hashed = await bcrypt.hash('secret', 10);
-    prismaMock.user.findUnique.mockResolvedValue({
-      id: 'user-1',
-      isActive: true,
-      password: hashed,
-    });
+    prismaMock.user.findUnique
+      .mockResolvedValueOnce({
+        id: 'user-1',
+        isActive: true,
+        password: hashed,
+      })
+      .mockResolvedValueOnce({
+        isActive: true,
+        organizationId: 'org-1',
+        branchId: null,
+      });
     prismaMock.authSession.create.mockResolvedValue({ id: 'session-1' });
 
     const result = await service.login('ok@test.com', 'secret');
@@ -157,6 +172,11 @@ describe('AuthService', () => {
     });
     prismaMock.authSession.update.mockResolvedValue({ id: 'session-1' });
     prismaMock.authSession.create.mockResolvedValue({ id: 'session-2' });
+    prismaMock.user.findUnique.mockResolvedValue({
+      isActive: true,
+      organizationId: 'org-1',
+      branchId: null,
+    });
 
     const result = await service.refresh('refresh-token');
 

@@ -16,9 +16,15 @@ describe('UsersController', () => {
       { id: '1', email: 'a@a.com', roles: ['USER'] },
     ]);
 
-    const result = await controller.findAll();
+    const result = await controller.findAll({
+      sub: 'u1',
+      organizationId: 'org-1',
+    });
 
-    expect(usersServiceMock.findAll).toHaveBeenCalledTimes(1);
+    expect(usersServiceMock.findAll).toHaveBeenCalledWith({
+      sub: 'u1',
+      organizationId: 'org-1',
+    });
     expect(result).toHaveLength(1);
   });
 });

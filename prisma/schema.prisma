@@ -7,20 +7,77 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum CashMovementType {
+  INCOME
+  EXPENSE
+}
+
+enum CashMovementStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DELIVERED
+}
+
+model Organization {
+  id   String @id @default(uuid())
+  name String
+  slug String @unique
+
+  users         User[]
+  branches      Branch[]
+  cashMovements CashMovement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+}
+
+model Branch {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name      String
+  code      String?
+  cashLimit Decimal? @db.Decimal(14, 2)
+
+  users         User[]
+  cashMovements CashMovement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@unique([organizationId, name])
+}
+
 model User {
   id       String  @id @default(uuid())
   email    String  @unique
   password String
   isActive Boolean @default(true)
 
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branchId       String?
+  branch         Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
   roles     UserRole[]
   sessions  AuthSession[]
   auditLogs AuditLog[]
 
   passwordResetTokens PasswordResetToken[]
+  createdCashMovements CashMovement[] @relation("CashMovementCreatedBy")
+  approvedCashMovements CashMovement[] @relation("CashMovementApprovedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([branchId])
 }
 
 model AuthSession {
@@ -116,4 +173,33 @@ model PasswordResetToken {
 
   @@index([token])
   @@index([userId])
+}
+
+model CashMovement {
+  id String @id @default(uuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  branchId String
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+
+  type   CashMovementType
+  amount Decimal          @db.Decimal(14, 2)
+
+  description String?
+  status      CashMovementStatus @default(PENDING)
+
+  createdById String
+  createdBy   User @relation("CashMovementCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  approvedById String?
+  approvedBy   User?    @relation("CashMovementApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, branchId, status, createdAt])
+  @@index([branchId, status])
+  @@index([createdById])
 }

@@ -31,6 +31,8 @@ interface UserRecord {
   email: string;
   password: string;
   isActive: boolean;
+  organizationId: string;
+  branchId: string | null;
 }
 
 interface SessionRecord {
@@ -82,6 +84,10 @@ function pickSelected<T extends object>(
 }
 
 function createPrismaMock() {
+  const defaultOrganization = {
+    id: '00000000-0000-0000-0000-000000000001',
+    slug: 'default-org',
+  };
   const users = new Map<string, UserRecord>();
   const usersByEmail = new Map<string, string>();
   const sessions = new Map<string, SessionRecord>();
@@ -93,6 +99,19 @@ function createPrismaMock() {
   };
 
   const mock = {
+    organization: {
+      findUnique: jest.fn(
+        async ({ where }: { where: { slug?: string; id?: string } }) => {
+          if (
+            where.slug === defaultOrganization.slug ||
+            where.id === defaultOrganization.id
+          ) {
+            return { ...defaultOrganization };
+          }
+          return null;
+        },
+      ),
+    },
     user: {
       create: jest.fn(async ({ data }: { data: any }) => {
         if (usersByEmail.has(data.email)) {
@@ -105,6 +124,10 @@ function createPrismaMock() {
           email: data.email as string,
           password: data.password as string,
           isActive: data.isActive ?? true,
+          organizationId:
+            (data.organizationId as string | undefined) ??
+            defaultOrganization.id,
+          branchId: (data.branchId as string | null | undefined) ?? null,
         };
         users.set(id, user);
         usersByEmail.set(user.email, id);

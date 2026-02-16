@@ -21,6 +21,24 @@ async function main() {
     },
   });
 
+  const managerRole = await prisma.role.upsert({
+    where: { name: 'MANAGER' },
+    update: {},
+    create: {
+      name: 'MANAGER',
+      description: 'Organization manager',
+    },
+  });
+
+  const operatorRole = await prisma.role.upsert({
+    where: { name: 'OPERATOR' },
+    update: {},
+    create: {
+      name: 'OPERATOR',
+      description: 'Branch operator',
+    },
+  });
+
   const usersRead = await prisma.permission.upsert({
     where: { key: 'users.read' },
     update: {},
@@ -39,33 +57,119 @@ async function main() {
     },
   });
 
-  await prisma.rolePermission.upsert({
-    where: {
-      roleId_permissionId: {
-        roleId: adminRole.id,
-        permissionId: usersRead.id,
-      },
-    },
+  const branchesRead = await prisma.permission.upsert({
+    where: { key: 'branches.read' },
     update: {},
     create: {
-      roleId: adminRole.id,
-      permissionId: usersRead.id,
+      key: 'branches.read',
+      description: 'Read branches',
     },
   });
 
-  await prisma.rolePermission.upsert({
-    where: {
-      roleId_permissionId: {
-        roleId: adminRole.id,
-        permissionId: usersWrite.id,
-      },
-    },
+  const branchesWrite = await prisma.permission.upsert({
+    where: { key: 'branches.write' },
     update: {},
     create: {
-      roleId: adminRole.id,
-      permissionId: usersWrite.id,
+      key: 'branches.write',
+      description: 'Write branches',
     },
   });
+
+  const cashMovementsCreate = await prisma.permission.upsert({
+    where: { key: 'cashMovements.create' },
+    update: {},
+    create: {
+      key: 'cashMovements.create',
+      description: 'Create cash movements',
+    },
+  });
+
+  const cashMovementsRead = await prisma.permission.upsert({
+    where: { key: 'cashMovements.read' },
+    update: {},
+    create: {
+      key: 'cashMovements.read',
+      description: 'Read cash movements',
+    },
+  });
+
+  const cashMovementsApprove = await prisma.permission.upsert({
+    where: { key: 'cashMovements.approve' },
+    update: {},
+    create: {
+      key: 'cashMovements.approve',
+      description: 'Approve or reject cash movements',
+    },
+  });
+
+  const cashMovementsDeliver = await prisma.permission.upsert({
+    where: { key: 'cashMovements.deliver' },
+    update: {},
+    create: {
+      key: 'cashMovements.deliver',
+      description: 'Mark cash movements as delivered',
+    },
+  });
+
+  const cashflowStatsRead = await prisma.permission.upsert({
+    where: { key: 'cashflow.stats.read' },
+    update: {},
+    create: {
+      key: 'cashflow.stats.read',
+      description: 'Read cashflow stats',
+    },
+  });
+
+  async function ensureRolePermission(roleId: string, permissionId: string) {
+    await prisma.rolePermission.upsert({
+      where: {
+        roleId_permissionId: {
+          roleId,
+          permissionId,
+        },
+      },
+      update: {},
+      create: {
+        roleId,
+        permissionId,
+      },
+    });
+  }
+
+  const adminPermissionIds = [
+    usersRead.id,
+    usersWrite.id,
+    branchesRead.id,
+    branchesWrite.id,
+    cashMovementsCreate.id,
+    cashMovementsRead.id,
+    cashMovementsApprove.id,
+    cashMovementsDeliver.id,
+    cashflowStatsRead.id,
+  ];
+  for (const permissionId of adminPermissionIds) {
+    await ensureRolePermission(adminRole.id, permissionId);
+  }
+
+  const managerPermissionIds = [
+    branchesRead.id,
+    cashMovementsRead.id,
+    cashMovementsApprove.id,
+    cashMovementsDeliver.id,
+    cashflowStatsRead.id,
+  ];
+  for (const permissionId of managerPermissionIds) {
+    await ensureRolePermission(managerRole.id, permissionId);
+  }
+
+  const operatorPermissionIds = [
+    cashMovementsCreate.id,
+    cashMovementsRead.id,
+    cashflowStatsRead.id,
+  ];
+  for (const permissionId of operatorPermissionIds) {
+    await ensureRolePermission(operatorRole.id, permissionId);
+  }
 
   // Keep USER role with least privilege by default.
   await prisma.rolePermission.deleteMany({

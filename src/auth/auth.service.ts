@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   ForbiddenException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
@@ -24,12 +25,24 @@ export class AuthService {
 
   async register(email: string, password: string, meta?: SessionMeta) {
     const hashedPassword = await bcrypt.hash(password, 10);
+    const defaultOrganization = await this.prisma.organization.findUnique({
+      where: { slug: 'default-org' },
+      select: { id: true },
+    });
+
+    if (!defaultOrganization) {
+      throw new InternalServerErrorException({
+        code: 'DEFAULT_ORGANIZATION_NOT_FOUND',
+        message: 'Default organization not found',
+      });
+    }
 
     const user = await this.prisma.user.create({
       data: {
         email,
         password: hashedPassword,
         isActive: true,
+        organizationId: defaultOrganization.id,
         roles: {
           create: {
             role: {
@@ -189,10 +202,27 @@ export class AuthService {
     replacedById?: string,
   ) {
     const sessionId = randomUUID();
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        isActive: true,
+        organizationId: true,
+        branchId: true,
+      },
+    });
 
-    const payload = {
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException({
+        code: ErrorCodes.AUTH_USER_INACTIVE,
+        message: 'Unauthorized',
+      });
+    }
+
+    const payload: SessionTokenPayload = {
       sub: userId,
       sid: sessionId,
+      organizationId: user.organizationId,
+      branchId: user.branchId ?? undefined,
     };
 
     const accessToken = this.jwt.sign(payload);
@@ -381,4 +411,11 @@ export class AuthService {
 interface SessionMeta {
   ip?: string;
   userAgent?: string;
+}
+
+interface SessionTokenPayload {
+  sub: string;
+  sid: string;
+  organizationId: string;
+  branchId?: string;
 }

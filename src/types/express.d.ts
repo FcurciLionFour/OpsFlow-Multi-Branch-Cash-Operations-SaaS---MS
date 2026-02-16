@@ -5,6 +5,8 @@ declare module 'express' {
     user?: {
       sub: string;
       sid?: string;
+      organizationId: string;
+      branchId?: string;
     };
     requestId?: string;
   }

@@ -9,17 +9,20 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import * as bcrypt from 'bcryptjs';
 import { ErrorCodes } from 'src/common/errors/error-codes';
+import {
+  TenantUserContext,
+  withOrganizationScope,
+} from 'src/common/tenant/tenant-scope';
 
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
-  // 📖 LISTAR USUARIOS (ADMIN)
-  async findAll(): Promise<UserResponseDto[]> {
+  async findAll(currentUser: TenantUserContext): Promise<UserResponseDto[]> {
     const users = await this.prisma.user.findMany({
-      where: {
+      where: withOrganizationScope(currentUser.organizationId, {
         isActive: true,
-      },
+      }),
       select: {
         id: true,
         email: true,
@@ -38,14 +41,12 @@ export class UsersService {
     }));
   }
 
-  // 🔍 OBTENER USUARIO
   async findById(
     id: string,
-    requesterId: string,
+    currentUser: TenantUserContext,
   ): Promise<UserResponseDto | null> {
-    await this.assertCanAccessUser(id, requesterId);
-    const user = await this.prisma.user.findUnique({
-      where: { id },
+    const user = await this.prisma.user.findFirst({
+      where: withOrganizationScope(currentUser.organizationId, { id }),
       select: {
         id: true,
         email: true,
@@ -64,6 +65,8 @@ export class UsersService {
       });
     }
 
+    await this.assertCanAccessUser(user.id, currentUser);
+
     return {
       id: user.id,
       email: user.email,
@@ -71,8 +74,7 @@ export class UsersService {
     };
   }
 
-  // ➕ CREAR USUARIO (ADMIN)
-  async create(data: CreateUserDto) {
+  async create(data: CreateUserDto, currentUser: TenantUserContext) {
     const exists = await this.prisma.user.findUnique({
       where: { email: data.email },
     });
@@ -91,7 +93,6 @@ export class UsersService {
       });
     }
 
-    // 1️⃣ Buscar roles válidos
     const roles = await this.prisma.role.findMany({
       where: {
         name: {
@@ -107,15 +108,14 @@ export class UsersService {
       });
     }
 
-    // 2️⃣ Crear usuario + asignar roles
     const hashedPassword = await bcrypt.hash(data.password, 10);
 
     const user = await this.prisma.user.create({
       data: {
         email: data.email,
-        // Se hashea acá para cubrir también alta administrativa de usuarios.
         password: hashedPassword,
         isActive: true,
+        organizationId: currentUser.organizationId,
         roles: {
           create: roles.map((role) => ({
             role: {
@@ -142,12 +142,15 @@ export class UsersService {
     };
   }
 
-  // ✏️ ACTUALIZAR USUARIO
-  async update(id: string, data: UpdateUserDto, requesterId: string) {
-    await this.assertCanAccessUser(id, requesterId);
+  async update(
+    id: string,
+    data: UpdateUserDto,
+    currentUser: TenantUserContext,
+  ) {
+    await this.assertCanAccessUser(id, currentUser);
 
-    const user = await this.prisma.user.findUnique({
-      where: { id },
+    const user = await this.prisma.user.findFirst({
+      where: withOrganizationScope(currentUser.organizationId, { id }),
     });
 
     if (!user) {
@@ -157,10 +160,8 @@ export class UsersService {
       });
     }
 
-    // 1️⃣ Separar roles del resto del payload
     const { roles, ...userData } = data;
 
-    // 2️⃣ Actualizar campos simples si existen
     if (Object.keys(userData).length > 0) {
       await this.prisma.user.update({
         where: { id },
@@ -168,7 +169,6 @@ export class UsersService {
       });
     }
 
-    // 3️⃣ Si vienen roles → reemplazarlos
     if (roles) {
       if (roles.length === 0) {
         throw new ForbiddenException({
@@ -190,12 +190,10 @@ export class UsersService {
         });
       }
 
-      // limpiar relaciones actuales
       await this.prisma.userRole.deleteMany({
         where: { userId: id },
       });
 
-      // crear nuevas relaciones
       await this.prisma.userRole.createMany({
         data: dbRoles.map((role) => ({
           userId: id,
@@ -204,7 +202,6 @@ export class UsersService {
       });
     }
 
-    // 4️⃣ Devolver estado final consistente
     const updated = await this.prisma.user.findUnique({
       where: { id },
       select: {
@@ -227,11 +224,11 @@ export class UsersService {
     };
   }
 
-  // 🗑️ BORRAR USUARIO (soft delete)
-  async remove(id: string, requesterId: string) {
-    await this.assertCanAccessUser(id, requesterId);
-    const user = await this.prisma.user.findUnique({
-      where: { id },
+  async remove(id: string, currentUser: TenantUserContext) {
+    await this.assertCanAccessUser(id, currentUser);
+
+    const user = await this.prisma.user.findFirst({
+      where: withOrganizationScope(currentUser.organizationId, { id }),
     });
 
     if (!user) {
@@ -250,14 +247,28 @@ export class UsersService {
 
     return { success: true };
   }
+
   private async assertCanAccessUser(
     targetUserId: string,
-    requesterUserId: string,
+    requester: TenantUserContext,
   ): Promise<void> {
-    // 1️⃣ Si es ADMIN → acceso total
+    const target = await this.prisma.user.findFirst({
+      where: withOrganizationScope(requester.organizationId, {
+        id: targetUserId,
+      }),
+      select: { id: true },
+    });
+
+    if (!target) {
+      throw new NotFoundException({
+        code: ErrorCodes.USER_NOT_FOUND,
+        message: 'User not found',
+      });
+    }
+
     const isAdmin = await this.prisma.userRole.findFirst({
       where: {
-        userId: requesterUserId,
+        userId: requester.sub,
         role: {
           name: 'ADMIN',
         },
@@ -268,12 +279,10 @@ export class UsersService {
       return;
     }
 
-    // 2️⃣ Si no es admin, solo puede acceder a sí mismo
-    if (targetUserId === requesterUserId) {
+    if (targetUserId === requester.sub) {
       return;
     }
 
-    // 3️⃣ Caso contrario → forbidden
     throw new ForbiddenException({
       code: ErrorCodes.ACCESS_DENIED,
       message: 'Access denied',

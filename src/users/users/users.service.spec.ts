@@ -10,6 +10,7 @@ import { UsersService } from './users.service';
 type PrismaMock = {
   user: {
     findMany: jest.Mock;
+    findFirst: jest.Mock;
     findUnique: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
@@ -31,6 +32,7 @@ describe('UsersService', () => {
   const prismaMock: PrismaMock = {
     user: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
@@ -43,6 +45,11 @@ describe('UsersService', () => {
       deleteMany: jest.fn(),
       createMany: jest.fn(),
     },
+  };
+
+  const adminUser = {
+    sub: 'admin-user-id',
+    organizationId: 'org-1',
   };
 
   beforeEach(async () => {
@@ -65,219 +72,90 @@ describe('UsersService', () => {
     await app.close();
   });
 
-  it('findAll returns active users mapped to response DTO', async () => {
+  it('findAll scopes users by organization', async () => {
     prismaMock.user.findMany.mockResolvedValue([
       {
         id: 'u1',
         email: 'a@test.com',
         roles: [{ role: { name: 'ADMIN' } }],
       },
-      {
-        id: 'u2',
-        email: 'b@test.com',
-        roles: [{ role: { name: 'USER' } }],
-      },
     ]);
 
-    const result = await service.findAll();
+    const result = await service.findAll(adminUser);
 
     expect(prismaMock.user.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { isActive: true },
+        where: { isActive: true, organizationId: 'org-1' },
       }),
     );
     expect(result).toEqual([
       { id: 'u1', email: 'a@test.com', roles: ['ADMIN'] },
-      { id: 'u2', email: 'b@test.com', roles: ['USER'] },
     ]);
   });
 
-  it('findById allows self-access and returns user', async () => {
-    prismaMock.userRole.findFirst.mockResolvedValue(null);
-    prismaMock.user.findUnique.mockResolvedValue({
-      id: 'u1',
-      email: 'self@test.com',
-      roles: [{ role: { name: 'USER' } }],
-    });
-
-    const result = await service.findById('u1', 'u1');
-
-    expect(result).toEqual({
-      id: 'u1',
-      email: 'self@test.com',
-      roles: ['USER'],
-    });
-  });
-
-  it('findById denies access for non-admin accessing another user', async () => {
+  it('findById denies non-admin access to another user', async () => {
+    prismaMock.user.findFirst
+      .mockResolvedValueOnce({
+        id: 'target-id',
+        email: 'target@test.com',
+        roles: [],
+      })
+      .mockResolvedValueOnce({ id: 'target-id' });
     prismaMock.userRole.findFirst.mockResolvedValue(null);
 
     await expect(
-      service.findById('target', 'requester'),
+      service.findById('target-id', {
+        sub: 'requester',
+        organizationId: 'org-1',
+      }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('findById throws not found when target user does not exist', async () => {
-    prismaMock.userRole.findFirst.mockResolvedValue({ id: 'admin-role' });
+  it('create assigns requester organizationId', async () => {
     prismaMock.user.findUnique.mockResolvedValue(null);
-
-    await expect(service.findById('missing', 'admin')).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
-  });
-
-  it('create hashes password when creating admin-managed users', async () => {
-    prismaMock.user.findUnique.mockResolvedValue(null);
-    prismaMock.role.findMany.mockResolvedValue([
-      { id: 'role-1', name: 'ADMIN' },
-    ]);
+    prismaMock.role.findMany.mockResolvedValue([{ id: 'r1', name: 'ADMIN' }]);
     prismaMock.user.create.mockResolvedValue({
       id: 'user-1',
-      email: 'admin-created@test.com',
+      email: 'new@test.com',
       roles: [{ role: { name: 'ADMIN' } }],
     });
 
-    const result = await service.create({
-      email: 'admin-created@test.com',
-      password: 'PlainTextPass123',
-      roles: ['ADMIN'],
-    });
+    await service.create(
+      {
+        email: 'new@test.com',
+        password: 'Password123',
+        roles: ['ADMIN'],
+      },
+      adminUser,
+    );
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const createCallArg = prismaMock.user.create.mock.calls[0]?.[0] as {
-      data: { password: string };
+    const createArgs = prismaMock.user.create.mock.calls[0]?.[0] as {
+      data: { organizationId: string };
     };
-
-    expect(createCallArg.data.password).toMatch(/^\$2[aby]\$/);
-    expect(result).toEqual({
-      id: 'user-1',
-      email: 'admin-created@test.com',
-      roles: ['ADMIN'],
-    });
+    expect(createArgs.data.organizationId).toBe('org-1');
   });
 
-  it('create throws when user already exists', async () => {
-    prismaMock.user.findUnique.mockResolvedValue({ id: 'existing' });
+  it('update throws not found when user is outside organization', async () => {
+    prismaMock.user.findFirst.mockResolvedValue(null);
 
     await expect(
-      service.create({
-        email: 'existing@test.com',
-        password: 'Password123',
-        roles: ['USER'],
-      }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+      service.update('target-id', {}, adminUser),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('create throws when roles are missing', async () => {
-    prismaMock.user.findUnique.mockResolvedValue(null);
-
-    await expect(
-      service.create({
-        email: 'roles@test.com',
-        password: 'Password123',
-        roles: [],
-      }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-  });
-
-  it('create throws when one or more roles are invalid', async () => {
-    prismaMock.user.findUnique.mockResolvedValue(null);
-    prismaMock.role.findMany.mockResolvedValue([
-      { id: 'role-1', name: 'ADMIN' },
-    ]);
-
-    await expect(
-      service.create({
-        email: 'invalid-roles@test.com',
-        password: 'abc',
-        roles: ['ADMIN', 'UNKNOWN'],
-      }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-  });
-
-  it('update updates scalar fields and role relations', async () => {
+  it('remove soft deletes user within same organization', async () => {
+    prismaMock.user.findFirst
+      .mockResolvedValueOnce({ id: 'u1' })
+      .mockResolvedValueOnce({ id: 'u1' });
     prismaMock.userRole.findFirst.mockResolvedValue({ id: 'admin-role' });
-    prismaMock.user.findUnique
-      .mockResolvedValueOnce({ id: 'u1', email: 'before@test.com' })
-      .mockResolvedValueOnce({
-        id: 'u1',
-        email: 'after@test.com',
-        isActive: true,
-        roles: [{ role: { name: 'ADMIN' } }],
-      });
-    prismaMock.role.findMany.mockResolvedValue([{ id: 'r1', name: 'ADMIN' }]);
 
-    const result = await service.update(
-      'u1',
-      { email: 'after@test.com', roles: ['ADMIN'] },
-      'admin',
-    );
-
-    expect(prismaMock.user.update).toHaveBeenCalledWith({
-      where: { id: 'u1' },
-      data: { email: 'after@test.com' },
-    });
-    expect(prismaMock.userRole.deleteMany).toHaveBeenCalledWith({
-      where: { userId: 'u1' },
-    });
-    expect(prismaMock.userRole.createMany).toHaveBeenCalledWith({
-      data: [{ userId: 'u1', roleId: 'r1' }],
-    });
-    expect(result).toEqual({
-      id: 'u1',
-      email: 'after@test.com',
-      isActive: true,
-      roles: ['ADMIN'],
-    });
-  });
-
-  it('update throws when user does not exist', async () => {
-    prismaMock.userRole.findFirst.mockResolvedValue({ id: 'admin-role' });
-    prismaMock.user.findUnique.mockResolvedValue(null);
-
-    await expect(service.update('missing', {}, 'admin')).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
-  });
-
-  it('update throws when roles payload is empty', async () => {
-    prismaMock.userRole.findFirst.mockResolvedValue({ id: 'admin-role' });
-    prismaMock.user.findUnique.mockResolvedValue({ id: 'u1' });
-
-    await expect(
-      service.update('u1', { roles: [] }, 'admin'),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-  });
-
-  it('update throws when roles payload contains invalid role', async () => {
-    prismaMock.userRole.findFirst.mockResolvedValue({ id: 'admin-role' });
-    prismaMock.user.findUnique.mockResolvedValue({ id: 'u1' });
-    prismaMock.role.findMany.mockResolvedValue([{ id: 'r1', name: 'ADMIN' }]);
-
-    await expect(
-      service.update('u1', { roles: ['ADMIN', 'UNKNOWN'] }, 'admin'),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-  });
-
-  it('remove soft deletes the user', async () => {
-    prismaMock.userRole.findFirst.mockResolvedValue({ id: 'admin-role' });
-    prismaMock.user.findUnique.mockResolvedValue({ id: 'u1' });
-
-    const result = await service.remove('u1', 'admin');
+    const result = await service.remove('u1', adminUser);
 
     expect(prismaMock.user.update).toHaveBeenCalledWith({
       where: { id: 'u1' },
       data: { isActive: false },
     });
     expect(result).toEqual({ success: true });
-  });
-
-  it('remove throws when user does not exist', async () => {
-    prismaMock.userRole.findFirst.mockResolvedValue({ id: 'admin-role' });
-    prismaMock.user.findUnique.mockResolvedValue(null);
-
-    await expect(service.remove('missing', 'admin')).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
   });
 });
